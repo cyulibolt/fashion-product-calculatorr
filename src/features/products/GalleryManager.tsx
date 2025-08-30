@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Upload, X, Image as ImageIcon, Star, Edit3, Save, ArrowUp, ArrowDown } from 'lucide-react';
+import React, { useState } from 'react';
+import { Upload, X, Image as ImageIcon, Star, Edit3, Save, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { useProductsStore } from './useProductsStore';
 import { ProductImage } from './types';
@@ -20,6 +20,7 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
   const [editingImage, setEditingImage] = useState<string | null>(null);
   const [editCaption, setEditCaption] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const product = getProduct(productId);
   const images = product?.gallery || [];
@@ -44,21 +45,29 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
     }
   };
 
-  const handleFiles = (files: FileList) => {
-    Array.from(files).forEach(file => {
+  const handleFiles = async (files: FileList) => {
+    setUploading(true);
+    
+    for (const file of Array.from(files)) {
       if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-          if (e.target?.result) {
-            await addImageToProduct(productId, {
-              url: e.target.result as string,
-              caption: file.name.split('.')[0]
-            });
-          }
-        };
-        reader.readAsDataURL(file);
+        try {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            if (e.target?.result) {
+              await addImageToProduct(productId, {
+                url: e.target.result as string,
+                caption: file.name.split('.')[0]
+              });
+            }
+          };
+          reader.readAsDataURL(file);
+        } catch (error) {
+          console.error('Error uploading image:', error);
+        }
       }
-    });
+    }
+    
+    setUploading(false);
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -90,22 +99,39 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
   };
 
   const removeImage = async (imageId: string) => {
-    await removeImageFromProduct(productId, imageId);
+    if (confirm('¿Estás seguro de que quieres eliminar esta imagen?')) {
+      await removeImageFromProduct(productId, imageId);
+    }
   };
 
   const moveImage = async (imageId: string, direction: 'up' | 'down') => {
-    const currentIndex = images.findIndex(img => img.id === imageId);
+    const sortedImages = [...images].sort((a, b) => a.sort - b.sort);
+    const currentIndex = sortedImages.findIndex(img => img.id === imageId);
     if (currentIndex === -1) return;
 
     const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-    if (newIndex < 0 || newIndex >= images.length) return;
+    if (newIndex < 0 || newIndex >= sortedImages.length) return;
 
-    const reorderedImages = [...images];
+    // Swap the images
+    const reorderedImages = [...sortedImages];
     [reorderedImages[currentIndex], reorderedImages[newIndex]] = 
     [reorderedImages[newIndex], reorderedImages[currentIndex]];
 
+    // Update sort values
+    reorderedImages.forEach((img, index) => {
+      img.sort = index;
+    });
+
     const newOrder = reorderedImages.map(img => img.id);
     await reorderProductImages(productId, newOrder);
+  };
+
+  const clearAllImages = async () => {
+    if (confirm('¿Estás seguro de que quieres eliminar todas las imágenes?')) {
+      for (const image of images) {
+        await removeImageFromProduct(productId, image.id);
+      }
+    }
   };
 
   return (
@@ -121,7 +147,7 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
           dragActive
             ? 'border-amber-400 bg-amber-50 scale-105'
             : 'border-gray-300 hover:border-amber-400 hover:bg-amber-50'
-        }`}
+        } ${uploading ? 'opacity-50 pointer-events-none' : ''}`}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
         onDragOver={handleDrag}
@@ -133,22 +159,42 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
           accept="image/*"
           onChange={handleFileInput}
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          disabled={uploading}
         />
-        <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-        <p className="text-lg font-medium text-gray-900 mb-2">
-          Arrastra imágenes aquí o haz clic para subir
-        </p>
-        <p className="text-sm text-gray-500">
-          PNG, JPG, GIF hasta 10MB cada una
-        </p>
+        {uploading ? (
+          <div className="space-y-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-600 mx-auto"></div>
+            <p className="text-lg font-medium text-gray-900">Subiendo imágenes...</p>
+          </div>
+        ) : (
+          <>
+            <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+            <p className="text-lg font-medium text-gray-900 mb-2">
+              Arrastra imágenes aquí o haz clic para subir
+            </p>
+            <p className="text-sm text-gray-500">
+              PNG, JPG, GIF hasta 10MB cada una
+            </p>
+          </>
+        )}
       </div>
 
       {/* Image Gallery */}
       {images.length > 0 ? (
         <div className="space-y-6">
-          <h3 className="text-lg font-semibold text-gray-900">
-            Imágenes Subidas ({images.length})
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-gray-900">
+              Imágenes Subidas ({images.length})
+            </h3>
+            <Button 
+              variant="danger" 
+              size="sm"
+              onClick={clearAllImages}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Limpiar Todo
+            </Button>
+          </div>
           
           <div className="grid gap-6">
             {images
@@ -159,13 +205,24 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
                     {/* Image Preview */}
                     <div className="flex-shrink-0 relative group">
                       <div 
-                        className="w-32 h-32 bg-gray-100 rounded-lg overflow-hidden cursor-pointer"
+                        className="w-32 h-32 bg-gray-100 rounded-lg overflow-hidden cursor-pointer shadow-sm"
                         onClick={() => setSelectedImage(image.url)}
                       >
                         <img
                           src={image.url}
                           alt={image.caption || `Imagen ${index + 1}`}
                           className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            target.style.display = 'none';
+                            target.parentElement!.innerHTML = `
+                              <div class="w-full h-full flex items-center justify-center bg-gray-100">
+                                <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                                </svg>
+                              </div>
+                            `;
+                          }}
                         />
                       </div>
                       {image.isCover && (
@@ -189,6 +246,7 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
                               onChange={(e) => setEditCaption(e.target.value)}
                               placeholder="Descripción de la imagen..."
                               className="block w-full rounded-lg border-gray-300 shadow-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                              autoFocus
                             />
                           </div>
                           <div className="flex space-x-3">
@@ -209,6 +267,7 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
                             </h4>
                             <p className="text-sm text-gray-500">
                               Posición: {index + 1} de {images.length}
+                              {image.isCover && ' • Imagen de portada'}
                             </p>
                           </div>
 
@@ -275,7 +334,10 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
         <div className="bg-white rounded-xl shadow-sm border p-12 text-center">
           <ImageIcon className="mx-auto h-16 w-16 text-gray-300 mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No hay imágenes aún</h3>
-          <p className="text-gray-500">Sube la primera imagen de tu producto</p>
+          <p className="text-gray-500 mb-4">Sube la primera imagen de tu producto</p>
+          <div className="text-sm text-gray-400">
+            Formatos soportados: JPG, PNG, GIF
+          </div>
         </div>
       )}
 
@@ -283,20 +345,10 @@ export const GalleryManager: React.FC<GalleryManagerProps> = ({
       <div className="mt-8 flex justify-between">
         {onBack && (
           <Button variant="secondary" onClick={onBack}>
-            Volver
+            ← Volver
           </Button>
         )}
         <div className="flex gap-3 ml-auto">
-          {images.length > 0 && (
-            <Button 
-              variant="secondary" 
-              onClick={() => {
-                images.forEach(image => removeImage(image.id));
-              }}
-            >
-              Limpiar Todo
-            </Button>
-          )}
           {onFinish && (
             <Button onClick={onFinish}>
               <Save className="w-4 h-4 mr-2" />
